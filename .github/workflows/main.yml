@@ -1,7 +1,7 @@
 name: Build Custom LuCI APK (v25.12.0+)
 
 on:
-  workflow_dispatch: # 支持在 GitHub Actions 页面手动点击触发
+  workflow_dispatch: # 支持手动点击触发
 
 jobs:
   build:
@@ -19,10 +19,7 @@ jobs:
 
       - name: 3. 下载并解压 25.12.0 专属 SDK
         run: |
-          # 【特别注意】这里默认以官方标准的 x86_64 (软路由) 架构 25.12.0 SDK 为例
-          # 如果你的路由器是其他芯片架构（如联发科 Filogic 等），请更换对应的 SDK 下载链接
           SDK_URL="https://downloads.openwrt.org/releases/25.12.0/targets/x86/64/openwrt-sdk-25.12.0-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
-          
           wget $SDK_URL -O sdk.tar.zst
           mkdir sdk
           tar -I zstd -xf sdk.tar.zst -C sdk --strip-components=1
@@ -31,22 +28,29 @@ jobs:
         run: |
           mv luci-app-adguardhome sdk/package/
 
-      - name: 5. 更新并安装 SDK 核心依赖 feeds
+      - name: 5. 更新并安装 SDK 核心依赖 feeds (带修复补丁)
         run: |
           cd sdk
           ./scripts/feeds update -a
+          
+          # 【核心修复 1】直接物理删除引发 Kconfig 循环依赖死锁的 nginx 源码目录
+          # 这样编译系统就不会去扫描它，从根本上避开官方源的 Bug
+          rm -rf feeds/packages/net/nginx
+          
           ./scripts/feeds install -a
 
-      - name: 6. 现场执行编译
+      - name: 6. 预配置并现场执行编译
         run: |
           cd sdk
-          # 构建系统会自动识别 25.12 环境并编译输出 APK 包
+          # 【核心修复 2】显式执行 defconfig，生成无交互的静默配置文件，防止其盲目调用 menuconfig
+          make defconfig
+          
+          # 执行单包编译
           make package/luci-app-adguardhome/compile V=s
 
       - name: 7. 收集并打包生成的 .apk 文件
         run: |
           mkdir -p artifact
-          # 核心修改：25.12 后缀全部变更为 *.apk 
           find sdk/bin/packages/ -name "*.apk" -exec cp {} artifact/ \;
 
       - name: 8. 上传到 GitHub Artifacts 供下载
